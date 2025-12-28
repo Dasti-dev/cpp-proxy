@@ -4,52 +4,85 @@
 #include "core/socket/acceptor.h"
 #include "connection/connection_manager.h"
 
-#include <sys/epoll.h>
-#include <errno.h>
-
 /*
- * Echo server using SAFE ConnectionManager wiring
+ * Entry point for proxy with ConnectionManager
+ *
+ * epoll user_data = Connection*
+ * FD is determined from Connection state
  */
 
 int main() {
-    Acceptor acceptor;
-    if (!acceptor.listen(8080)) {
-        std::cerr << "Failed to listen\n";
-        return 1;
-    }
+    try {
+        EpollLoop loop;
 
-    EpollLoop loop;
-    ConnectionManager manager(loop);
+        // Create listening socket
+        Acceptor acceptor;
+        if (!acceptor.listen(8080)) {
+            std::cerr << "Failed to listen on 8080\n";
+            return 1;
+        }
 
-    // Register acceptor fd
-    loop.add(
-        acceptor.fd(),
-        EPOLLIN,
-        reinterpret_cast<void*>(static_cast<intptr_t>(acceptor.fd()))
-    );
+        ConnectionManager manager(loop);
 
-    while (true) {
-        loop.wait(1000);
+        // Register listening socket
+        loop.add(
+            acceptor.fd(),
+            EPOLLIN,
+            &acceptor   // acceptor is special-cased
+        );
 
-        for (const auto& ev : loop.events()) {
-            int fd = static_cast<int>(
-                reinterpret_cast<intptr_t>(ev.user_data)
-            );
+        std::cout << "Proxy listening on port 8080\n";
 
-            if (fd == acceptor.fd()) {
-                while (true) {
-                    int client_fd = acceptor.accept();
-                    if (client_fd < 0) {
-                        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        while (true) {
+            loop.wait(1000);
+
+            for (const auto& ev : loop.events()) {
+
+                /* ================= ACCEPT NEW CLIENT ================= */
+
+                if (ev.user_data == &acceptor) {
+                    while (true) {
+                        int client_fd = acceptor.accept();
+                        if (client_fd < 0) {
                             break;
                         }
-                        break;
+                        manager.add_client(client_fd);
                     }
-                    manager.add_client(client_fd);
+                    continue;
                 }
-            } else {
-                manager.handle_event(fd, ev.events);
+
+                /* ================= DISPATCH CONNECTION EVENT ================= */
+
+                Connection* conn = static_cast<Connection*>(ev.user_data);
+                if (!conn) continue;
+
+                int fd = -1;
+
+                // Decide which FD triggered epoll based on connection state
+                switch (conn->state()) {
+                    case ConnectionState::CLIENT_READING_HEADERS:
+                    case ConnectionState::CLIENT_WRITING_RESPONSE:
+                        fd = conn->client_fd();
+                        break;
+
+                    case ConnectionState::BACKEND_CONNECTING:
+                    case ConnectionState::BACKEND_WRITING_REQUEST:
+                    case ConnectionState::BACKEND_READING_RESPONSE:
+                        fd = conn->backend_fd();
+                        break;
+
+                    default:
+                        continue;
+                }
+
+                manager.handle_event(conn, fd, ev.events);
             }
         }
     }
+    catch (const std::exception& ex) {
+        std::cerr << "Fatal error: " << ex.what() << "\n";
+        return 1;
+    }
+
+    return 0;
 }

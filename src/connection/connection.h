@@ -8,49 +8,31 @@
 /*
  * Connection
  * ----------
- * Represents a single end-to-end proxy connection.
- *
- * Owns:
- * - Client FD
- * - Backend FD (optional, later)
- * - Read / write buffers
- * - Explicit connection state
- *
- * Rules:
- * - Owns all its resources
- * - No implicit state transitions
- * - No blocking calls
- * - No exit()
+ * Owns client + backend sockets and buffers.
  */
 
 class Connection {
 public:
-    // Construct with accepted client fd
     explicit Connection(int client_fd);
 
-    // Non-copyable
     Connection(const Connection&) = delete;
     Connection& operator=(const Connection&) = delete;
 
-    // Movable
     Connection(Connection&&) noexcept;
     Connection& operator=(Connection&&) noexcept;
 
     ~Connection();
 
-    // Accessors
     int client_fd() const noexcept;
     int backend_fd() const noexcept;
 
+    void set_backend_fd(int fd);
+
     ConnectionState state() const noexcept;
+    void set_state(ConnectionState s);
 
-    // Explicit state transition
-    void set_state(ConnectionState new_state);
-
-    // State helpers (read-only)
     bool is_closed() const noexcept;
 
-    // Buffers (exposed intentionally for now)
     Buffer& client_read_buffer();
     Buffer& client_write_buffer();
 
@@ -59,7 +41,7 @@ public:
 
 private:
     FDWrapper client_fd_;
-    FDWrapper backend_fd_;   // invalid until backend connected
+    FDWrapper backend_fd_;
 
     Buffer client_read_buf_;
     Buffer client_write_buf_;

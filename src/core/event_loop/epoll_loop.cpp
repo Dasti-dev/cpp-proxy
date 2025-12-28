@@ -1,60 +1,59 @@
 #include "epoll_loop.h"
 
-#include <sys/epoll.h>
 #include <unistd.h>
+#include <stdexcept>
 
 EpollLoop::EpollLoop()
-    : epoll_fd_(::epoll_create1(0)) {}
+    : epoll_fd_(::epoll_create1(0)),
+      raw_events_(1024) {
+    if (epoll_fd_ < 0)
+        throw std::runtime_error("epoll_create1 failed");
+}
 
 EpollLoop::~EpollLoop() {
-    if (epoll_fd_ >= 0) {
-        ::close(epoll_fd_);
-    }
+    ::close(epoll_fd_);
 }
 
-bool EpollLoop::add(int fd, uint32_t events, void* user_data) {
+void EpollLoop::add(int fd, uint32_t events, void* user_data) {
+    epoll_event ev{};
+    ev.events = events;
+    ev.data.ptr = user_data;   // ✅ ONLY ptr
+
+    ::epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, fd, &ev);
+}
+
+void EpollLoop::modify(int fd, uint32_t events, void* user_data) {
     epoll_event ev{};
     ev.events = events;
     ev.data.ptr = user_data;
 
-    return (::epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, fd, &ev) == 0);
+    ::epoll_ctl(epoll_fd_, EPOLL_CTL_MOD, fd, &ev);
 }
 
-bool EpollLoop::modify(int fd, uint32_t events, void* user_data) {
-    epoll_event ev{};
-    ev.events = events;
-    ev.data.ptr = user_data;
-
-    return (::epoll_ctl(epoll_fd_, EPOLL_CTL_MOD, fd, &ev) == 0);
-}
-
-bool EpollLoop::remove(int fd) {
-    return (::epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, fd, nullptr) == 0);
+void EpollLoop::remove(int fd) {
+    ::epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, fd, nullptr);
 }
 
 int EpollLoop::wait(int timeout_ms) {
-    ready_events_.clear();
+    int n = ::epoll_wait(
+        epoll_fd_,
+        raw_events_.data(),
+        raw_events_.size(),
+        timeout_ms
+    );
 
-    constexpr int MAX_EVENTS = 1024;
-    epoll_event events[MAX_EVENTS];
-
-    int n = ::epoll_wait(epoll_fd_, events, MAX_EVENTS, timeout_ms);
-    if (n <= 0) {
-        return n;
-    }
-
-    ready_events_.reserve(n);
+    events_.clear();
     for (int i = 0; i < n; ++i) {
-        Event ev{};
-        ev.fd = events[i].data.fd;          // not used, but kept for clarity
-        ev.events = events[i].events;
-        ev.user_data = events[i].data.ptr;
-        ready_events_.push_back(ev);
+        events_.push_back({
+            /* fd */ -1,                    // ❌ DO NOT USE
+            raw_events_[i].events,
+            raw_events_[i].data.ptr         // ✅ Connection*
+        });
     }
 
     return n;
 }
 
 const std::vector<EpollLoop::Event>& EpollLoop::events() const {
-    return ready_events_;
+    return events_;
 }

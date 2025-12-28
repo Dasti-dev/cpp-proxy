@@ -12,7 +12,7 @@ set(CMAKE_BUILD_TYPE Debug)
 include_directories(${PROJECT_SOURCE_DIR}/src)
 
 # ===============================
-# Echo server (FD-safe, ConnectionManager based)
+# Echo HTTP server (FD-safe, HTTP-enabled)
 # ===============================
 add_executable(echo_cm
     examples/echo_with_connection_manager.cpp
@@ -20,6 +20,9 @@ add_executable(echo_cm
     # Connection layer
     src/connection/connection.cpp
     src/connection/connection_manager.cpp
+
+    # HTTP protocol
+    src/protocol/http/http_parser.cpp
 
     # Core layers (Phase 1)
     src/core/fd/fd_wrapper.cpp

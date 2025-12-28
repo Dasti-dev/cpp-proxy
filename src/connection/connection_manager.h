@@ -4,38 +4,36 @@
 
 #include "connection.h"
 #include "core/event_loop/epoll_loop.h"
+#include "protocol/http/http_parser.h"
 
 /*
  * ConnectionManager
  * -----------------
- * Owns all live connections and enforces lifecycle.
+ * Single-backend reverse proxy.
  *
- * epoll user_data invariant:
- *   - Stores ONLY client fd (int)
- *   - Never stores pointers or references
+ * epoll user_data ALWAYS points to Connection*
  */
 
 class ConnectionManager {
 public:
     explicit ConnectionManager(EpollLoop& loop);
 
-    ConnectionManager(const ConnectionManager&) = delete;
-    ConnectionManager& operator=(const ConnectionManager&) = delete;
-
-    // Called when acceptor accepts a new client
     void add_client(int client_fd);
-
-    // Dispatch epoll event by fd (SAFE)
-    void handle_event(int fd, uint32_t events);
+    void handle_event(Connection* conn, int fd, uint32_t events);
 
 private:
     EpollLoop& loop_;
     std::unordered_map<int, Connection> connections_;
+    HttpParser parser_;
 
-    // Lifecycle
-    void close_connection(int fd);
+    void close_connection(Connection* conn);
 
-    // Echo handlers (Phase 3.5 validation)
-    void handle_client_reading(Connection& conn);
-    void handle_client_writing(Connection& conn);
+    // handlers
+    void handle_client_read(Connection* conn);
+    void handle_backend_connect(Connection* conn);
+    void handle_backend_write(Connection* conn);
+    void handle_backend_read(Connection* conn);
+    void handle_client_write(Connection* conn);
+
+    int connect_backend();
 };
