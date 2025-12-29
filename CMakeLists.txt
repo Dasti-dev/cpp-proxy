@@ -1,30 +1,31 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.16)
 project(cpp_proxy LANGUAGES CXX)
 
-# ===============================
-# Global config
-# ===============================
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_BUILD_TYPE Debug)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Root include directory
-include_directories(${PROJECT_SOURCE_DIR}/src)
+# ----------------------------
+# Build options
+# ----------------------------
+option(PROXY_DEBUG "Enable proxy debug logs" OFF)
 
-# ===============================
-# Echo HTTP server (FD-safe, HTTP-enabled)
-# ===============================
-add_executable(echo_cm
-    examples/echo_with_connection_manager.cpp
+if (PROXY_DEBUG)
+    add_compile_definitions(PROXY_DEBUG)
+endif()
 
-    # Connection layer
-    src/connection/connection.cpp
-    src/connection/connection_manager.cpp
+# ----------------------------
+# Include paths
+# ----------------------------
+include_directories(
+    ${PROJECT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/src
+)
 
-    # HTTP protocol
-    src/protocol/http/http_parser.cpp
-
-    # Core layers (Phase 1)
+# ----------------------------
+# Source files
+# ----------------------------
+set(CORE_SOURCES
     src/core/fd/fd_wrapper.cpp
     src/core/buffer/buffer.cpp
     src/core/socket/socket.cpp
@@ -32,11 +33,30 @@ add_executable(echo_cm
     src/core/event_loop/epoll_loop.cpp
 )
 
+set(CONNECTION_SOURCES
+    src/connection/connection.cpp
+    src/connection/connection_manager.cpp
+)
+
+set(PROTOCOL_SOURCES
+    src/protocol/http/http_parser.cpp
+)
+
+# ----------------------------
+# Executable: proxy server
+# ----------------------------
+add_executable(echo_cm
+    examples/echo_with_connection_manager.cpp
+    ${CORE_SOURCES}
+    ${CONNECTION_SOURCES}
+    ${PROTOCOL_SOURCES}
+)
+
 target_link_libraries(echo_cm PRIVATE pthread)
 
-# ===============================
-# HTTP parser unit tests
-# ===============================
+# ----------------------------
+# Unit test: HTTP parser
+# ----------------------------
 add_executable(http_parser_test
     tests/unit/http_parser_test.cpp
     src/protocol/http/http_parser.cpp

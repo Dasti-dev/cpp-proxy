@@ -1,88 +1,45 @@
 #include <iostream>
+#include <errno.h>
 
 #include "core/event_loop/epoll_loop.h"
 #include "core/socket/acceptor.h"
 #include "connection/connection_manager.h"
 
-/*
- * Entry point for proxy with ConnectionManager
- *
- * epoll user_data = Connection*
- * FD is determined from Connection state
- */
-
 int main() {
-    try {
-        EpollLoop loop;
+    Acceptor acceptor;
+    acceptor.listen(8080);
 
-        // Create listening socket
-        Acceptor acceptor;
-        if (!acceptor.listen(8080)) {
-            std::cerr << "Failed to listen on 8080\n";
-            return 1;
-        }
+    EpollLoop loop;
+    ConnectionManager manager(loop);
 
-        ConnectionManager manager(loop);
+    loop.add(acceptor.fd(), EPOLLIN, nullptr);
+    std::cout << "[proxy] listening on port 8080\n";
 
-        // Register listening socket
-        loop.add(
-            acceptor.fd(),
-            EPOLLIN,
-            &acceptor   // acceptor is special-cased
-        );
+    while (true) {
+        int n = loop.wait(1000);
+        if (n <= 0)
+            continue;
 
-        std::cout << "Proxy listening on port 8080\n";
+        for (int i = 0; i < loop.ready_count(); ++i) {
+            const epoll_event& ev = loop.event_at(i);
 
-        while (true) {
-            loop.wait(1000);
-
-            for (const auto& ev : loop.events()) {
-
-                /* ================= ACCEPT NEW CLIENT ================= */
-
-                if (ev.user_data == &acceptor) {
-                    while (true) {
-                        int client_fd = acceptor.accept();
-                        if (client_fd < 0) {
+            if (ev.data.ptr == nullptr) {
+                while (true) {
+                    int cfd = acceptor.accept();
+                    if (cfd < 0) {
+                        if (errno == EAGAIN || errno == EWOULDBLOCK)
                             break;
-                        }
-                        manager.add_client(client_fd);
+                        break;
                     }
-                    continue;
+
+                    std::cout << "[proxy] new client fd=" << cfd << "\n";
+                    manager.add_client(cfd);
                 }
-
-                /* ================= DISPATCH CONNECTION EVENT ================= */
-
-                Connection* conn = static_cast<Connection*>(ev.user_data);
-                if (!conn) continue;
-
-                int fd = -1;
-
-                // Decide which FD triggered epoll based on connection state
-                switch (conn->state()) {
-                    case ConnectionState::CLIENT_READING_HEADERS:
-                    case ConnectionState::CLIENT_WRITING_RESPONSE:
-                        fd = conn->client_fd();
-                        break;
-
-                    case ConnectionState::BACKEND_CONNECTING:
-                    case ConnectionState::BACKEND_WRITING_REQUEST:
-                    case ConnectionState::BACKEND_READING_RESPONSE:
-                        fd = conn->backend_fd();
-                        break;
-
-                    default:
-                        continue;
-                }
-
-                manager.handle_event(conn, fd, ev.events);
+            } else {
+                manager.handle_event(ev.data.ptr, ev.events);
             }
         }
-    }
-    catch (const std::exception& ex) {
-        std::cerr << "Fatal error: " << ex.what() << "\n";
-        return 1;
-    }
 
-    return 0;
+        manager.sweep_closed();
+    }
 }
